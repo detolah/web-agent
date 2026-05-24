@@ -1,8 +1,5 @@
-import requests
 from urllib.parse import urlparse
-
-TIMEOUT = 8
-HEADERS = {"User-Agent": "Mozilla/5.0 WordPress-Auditor/1.0"}
+from fetcher import session_get
 
 SENSITIVE_PATHS = ["/wp-content/", "/wp-includes/"]
 
@@ -20,18 +17,14 @@ def check(fetch_result: dict) -> dict:
         "issues": [],
     }
 
-    try:
-        resp = requests.get(f"{base}/robots.txt", headers=HEADERS, timeout=TIMEOUT)
-        if resp.status_code != 200:
-            result["issues"].append("robots_txt_not_found")
-            return result
-        result["found"] = True
-        text = resp.text
-    except Exception:
-        result["issues"].append("robots_txt_fetch_error")
+    resp = session_get(f"{base}/robots.txt", fetch_result)
+    if not resp or resp.status_code != 200:
+        result["issues"].append("robots_txt_not_found")
         return result
 
-    # Parse rules for User-agent: *
+    result["found"] = True
+    text = resp.text
+
     in_global = False
     blocked = []
 

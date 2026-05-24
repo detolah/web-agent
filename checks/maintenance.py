@@ -4,8 +4,9 @@ from datetime import datetime, timezone
 from urllib.parse import urlparse
 import re
 
+from fetcher import session_get
+
 TIMEOUT = 8
-HEADERS = {"User-Agent": "Mozilla/5.0 WordPress-Auditor/1.0"}
 WP_VERSION_API = "https://api.wordpress.org/core/version-check/1.7/"
 
 
@@ -55,7 +56,6 @@ def check(fetch_result: dict) -> dict:
         "server_info_exposed": False,
     }
 
-    # WordPress version from generator meta
     soup = BeautifulSoup(html, "lxml")
     gen = soup.find("meta", attrs={"name": "generator"})
     if gen:
@@ -71,45 +71,35 @@ def check(fetch_result: dict) -> dict:
                 except InvalidVersion:
                     result["wp_outdated"] = None
 
-    # Last-Modified header
     lm = headers.get("Last-Modified") or headers.get("last-modified")
     if lm:
         dt = _parse_http_date(lm)
         result["last_modified_days_ago"] = _days_ago(dt)
 
-    # Server info leak
     if headers.get("X-Powered-By") or headers.get("x-powered-by"):
         result["server_info_exposed"] = True
 
-    # Sitemap
-    try:
-        resp = requests.get(f"{base}/sitemap.xml", headers=HEADERS, timeout=TIMEOUT)
-        if resp.status_code == 200:
-            result["sitemap_found"] = True
-            sm_soup = BeautifulSoup(resp.text, "lxml-xml")
-            lastmods = sm_soup.find_all("lastmod")
-            if lastmods:
-                dates = []
-                for tag in lastmods:
-                    try:
-                        dates.append(datetime.fromisoformat(tag.text.strip().replace("Z", "+00:00")))
-                    except ValueError:
-                        pass
-                if dates:
-                    result["last_modified_days_ago"] = _days_ago(max(dates))
-    except Exception:
-        pass
+    resp = session_get(f"{base}/sitemap.xml", fetch_result)
+    if resp and resp.status_code == 200:
+        result["sitemap_found"] = True
+        sm_soup = BeautifulSoup(resp.text, "lxml-xml")
+        lastmods = sm_soup.find_all("lastmod")
+        if lastmods:
+            dates = []
+            for tag in lastmods:
+                try:
+                    dates.append(datetime.fromisoformat(tag.text.strip().replace("Z", "+00:00")))
+                except ValueError:
+                    pass
+            if dates:
+                result["last_modified_days_ago"] = _days_ago(max(dates))
 
-    # RSS feed last post
-    try:
-        resp = requests.get(f"{base}/feed/", headers=HEADERS, timeout=TIMEOUT)
-        if resp.status_code == 200:
-            feed_soup = BeautifulSoup(resp.text, "lxml-xml")
-            pub_dates = feed_soup.find_all("pubDate")
-            if pub_dates:
-                dt = _parse_http_date(pub_dates[0].text.strip())
-                result["last_post_days_ago"] = _days_ago(dt)
-    except Exception:
-        pass
+    resp = session_get(f"{base}/feed/", fetch_result)
+    if resp and resp.status_code == 200:
+        feed_soup = BeautifulSoup(resp.text, "lxml-xml")
+        pub_dates = feed_soup.find_all("pubDate")
+        if pub_dates:
+            dt = _parse_http_date(pub_dates[0].text.strip())
+            result["last_post_days_ago"] = _days_ago(dt)
 
     return result
